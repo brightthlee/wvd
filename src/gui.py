@@ -790,7 +790,16 @@ class ConfigPanelApp:
         )
         self._window.events.closed += self._on_window_closed
         # 页面加载完成后再显示窗口, 避免先出现约 0.4 秒的空白窗口.
-        self._window.events.loaded += lambda: self._window.show()
+        # 注意: 某些 Linux 发行版自带的 pywebview (GTK 后端) 版本较旧,
+        # BrowserView.show() 内部用 gtk.main_level() 判断是否处于主循环中;
+        # 该后端用 Gtk.Application.run() 启动, 从不调用旧式 gtk.main(),
+        # 导致 gtk.main_level() 恒为 0, show() 里 hidden=True 的分支会在
+        # show_all() 之后立刻把窗口重新隐藏. 显示前把 hidden 置为 False
+        # 可以绕开这个判断, 让窗口保持可见.
+        def _show_window():
+            self._window.hidden = False
+            self._window.show()
+        self._window.events.loaded += _show_window
 
         logger.info("**********************************")
         logger.info(_("当前版本: %s") % version)
