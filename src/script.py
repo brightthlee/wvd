@@ -3,6 +3,7 @@ from ppadb.client import Client as AdbClient
 from utils import *
 from enum import Enum
 import os
+import shutil
 import subprocess
 import random
 from threading import Thread,Event
@@ -244,9 +245,36 @@ def GetADBPathFromEmuPath(emu_path):
         if not os.path.exists(adb_path):
             logger.error(_("adb程序序不存在: {a}").format(a=adb_path))
             return None
-    
+
         return adb_path
+def IsMuMuAvailable(setting):
+    """系统上是否配置了可用的 MuMu(或蓝叠)模拟器路径. 没有的话就只走纯 adb 流程."""
+    emu_path = getattr(setting, "EMU_PATH", None)
+    return bool(emu_path) and os.path.exists(emu_path)
+def GetADBPath(setting):
+    if IsMuMuAvailable(setting):
+        adb_path = GetADBPathFromEmuPath(setting.EMU_PATH)
+        if adb_path:
+            return adb_path
+    return shutil.which("adb") or "adb"
+def IsTcpAddress(address):
+    """ADB_ADRESS是否是 ip:port 这种网络地址. 本机USB连接时填的是设备序列号, 没有冒号+端口, 返回False."""
+    if not address:
+        return False
+    parts = address.rsplit(":", 1)
+    if len(parts) != 2:
+        return False
+    return parts[1].isdigit()
 def CheckAndRecoverDevice(setting : FarmConfig, runtimeContext: RuntimeContext, FORCE_RESTART_EMU = False, FORCE_RESTART_ADB = False):
+    if not setting.ADB_ADRESS:
+        logger.error(_("ADB_ADRESS为空, 请先在设置里填写设备地址/序列号."))
+        return None
+    mumu_available = IsMuMuAvailable(setting)
+    is_tcp_address = IsTcpAddress(setting.ADB_ADRESS)
+    if not mumu_available:
+        logger.info(_("未检测到MuMu模拟器路径, 将跳过模拟器管理, 只用adb连接设备."))
+    if not is_tcp_address:
+        logger.info(_("ADB_ADRESS不是ip:port格式, 视为本机(USB)连接, 将跳过adb connect."))
     def CheckEmulator():
         result = subprocess.run(
             "tasklist /FO CSV /NH | findstr \"MuMuNxDevice.exe MuMuPlayer.exe\"",
@@ -271,7 +299,7 @@ def CheckAndRecoverDevice(setting : FarmConfig, runtimeContext: RuntimeContext, 
                     pass
         return check_results_list
     def KillAdb():
-        adb_path = GetADBPathFromEmuPath(setting.EMU_PATH)
+        adb_path = GetADBPath(setting)
         try:
             logger.info(_("正在检查并关闭adb..."))
             # Windows 系统使用 taskkill 命令
@@ -421,12 +449,19 @@ def CheckAndRecoverDevice(setting : FarmConfig, runtimeContext: RuntimeContext, 
 
         # 记录本次模拟器启动时间, 供定时强制重启判断使用.
         runtimeContext.RESTART_EMU_TIMESTAMP = time.time()
+    def SetDisplayMetrics(serial):
+        try:
+            logger.info(_("设置设备分辨率与DPI: 900x1600, 240dpi..."))
+            CMDLine(f"\"{adb_path}\" -s {serial} shell wm size 900x1600")
+            CMDLine(f"\"{adb_path}\" -s {serial} shell wm density 240")
+        except Exception as e:
+            logger.error(_("设置设备分辨率/DPI时出错: {a}").format(a=str(e)))
 
     # 以上是内部函数
     ####################################
     # 功能实现
 
-    if FORCE_RESTART_EMU:
+    if FORCE_RESTART_EMU and mumu_available:
         KillEmulator()
         Sleep(1)
         # 强制重启也刷新时间戳, 保证 RestartSignal 重试时不会重复重启.
@@ -438,7 +473,7 @@ def CheckAndRecoverDevice(setting : FarmConfig, runtimeContext: RuntimeContext, 
 
     MAXRETRIES = 20
 
-    adb_path = GetADBPathFromEmuPath(setting.EMU_PATH)
+    adb_path = GetADBPath(setting)
 
     for attempt in range(MAXRETRIES):
         logger.info(_("-----------------------\n开始尝试连接adb. 次数:{a}/{b}...").format(a=attempt + 1, b=MAXRETRIES))
@@ -461,22 +496,26 @@ def CheckAndRecoverDevice(setting : FarmConfig, runtimeContext: RuntimeContext, 
                     CMDLine(f"\"{adb_path}\" start-server")
                     Sleep(2)
 
-            logger.debug(_("尝试连接到adb..."))
-            result = CMDLine(f"\"{adb_path}\" connect {setting.ADB_ADRESS}")
+            if is_tcp_address:
+                logger.debug(_("尝试连接到adb..."))
+                result = CMDLine(f"\"{adb_path}\" connect {setting.ADB_ADRESS}")
+            else:
+                logger.debug(_("本机(USB)连接, 跳过adb connect, 直接检查adb devices..."))
 
             result = CMDLine(f"\"{adb_path}\" devices")
             if ("{a}").format(a=setting.ADB_ADRESS) in result.stdout:
-                logger.info(_("成功连接到模拟器!"))
-                results_list = CheckEmulator()
-                logger.debug("{a}".format(a=results_list))
-                if len(results_list)==1:
-                    runtimeContext._RUNNING_EMU_PID = int(results_list[0])
-                    logger.info(_("模拟器进程号为{a}.".format(a=runtimeContext._RUNNING_EMU_PID)))
-                else:
-                    logger.info(_("\n\n***********\n有多个模拟器已经启动, 无法识别进程号. 当需要重启模拟器的时候, 会重启所有模拟器.\n为了避免此问题, 请关闭目标模拟器, 并使用本脚本自动启动模拟器.\n\n"))
+                logger.info(_("成功连接到设备!"))
+                if mumu_available:
+                    results_list = CheckEmulator()
+                    logger.debug("{a}".format(a=results_list))
+                    if len(results_list)==1:
+                        runtimeContext._RUNNING_EMU_PID = int(results_list[0])
+                        logger.info(_("模拟器进程号为{a}.".format(a=runtimeContext._RUNNING_EMU_PID)))
+                    else:
+                        logger.info(_("\n\n***********\n有多个模拟器已经启动, 无法识别进程号. 当需要重启模拟器的时候, 会重启所有模拟器.\n为了避免此问题, 请关闭目标模拟器, 并使用本脚本自动启动模拟器.\n\n"))
                 break
 
-            if (not runtimeContext._RUNNING_EMU_PID) or (runtimeContext._RUNNING_EMU_PID not in CheckEmulator()):
+            if mumu_available and ((not runtimeContext._RUNNING_EMU_PID) or (runtimeContext._RUNNING_EMU_PID not in CheckEmulator())):
                 logger.info(_("模拟器未运行，尝试启动..."))
                 StartEmulator()
                 logger.info(_("模拟器(应该)启动完毕.\n 尝试连接到模拟器..."))
@@ -488,13 +527,15 @@ def CheckAndRecoverDevice(setting : FarmConfig, runtimeContext: RuntimeContext, 
 
             logger.info(_("连接失败: {a}".format(a=result.stderr.strip())))
             Sleep(2)
-            KillEmulator()
+            if mumu_available:
+                KillEmulator()
             KillAdb()
             Sleep(2)
         except Exception as e:
             logger.error(_("重启ADB服务时出错: {a}".format(a=e)))
             Sleep(2)
-            KillEmulator()
+            if mumu_available:
+                KillEmulator()
             KillAdb()
             Sleep(2)
             return None
@@ -511,6 +552,7 @@ def CheckAndRecoverDevice(setting : FarmConfig, runtimeContext: RuntimeContext, 
         for device in devices:
             if device.serial == target_device:
                 logger.info(_("成功创建设备对象: {a}".format(a=device.serial)))
+                SetDisplayMetrics(device.serial)
                 return device
     except Exception as e:
         logger.error(_("创建ADB设备时出错: {a}".format(a=e)))
@@ -662,7 +704,7 @@ def Factory():
                 else:
                     cmd = "screencap 2>/dev/null"
                 process_result = subprocess.run(
-                    [GetADBPathFromEmuPath(setting.EMU_PATH), "-s", serial, "exec-out",
+                    [GetADBPath(setting), "-s", serial, "exec-out",
                     cmd],
                     capture_output=True,
                     timeout=5,

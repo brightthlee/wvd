@@ -118,12 +118,19 @@ def RegisterConsoleHandler():
 
 # 重定向标准输出/错误到 loguru
 class LoggerStream:
-    """自定义流，将输出重定向到 loguru"""
-    def __init__(self, level):
+    """自定义流，将输出重定向到 loguru.
+
+    同时把内容转发回原始 stdout/stderr: 一些 GUI 后端 (如 Linux 下的
+    pywebview/GTK) 会在内部检查/使用 sys.stdout、sys.stderr 的真实文件
+    描述符, 完全替换成不转发的对象会导致窗口加载回调卡死不触发.
+    """
+    def __init__(self, level, real_stream):
         self.level = level
         self.buffer = ''
+        self._real = real_stream
 
     def write(self, message):
+        self._real.write(message)
         self.buffer += message
         while '\n' in self.buffer:
             line, self.buffer = self.buffer.split('\n', 1)
@@ -131,13 +138,20 @@ class LoggerStream:
                 logger.log(self.level, line)
 
     def flush(self):
+        self._real.flush()
         if self.buffer:
             logger.log(self.level, self.buffer)
             self.buffer = ''
 
+    def fileno(self):
+        return self._real.fileno()
+
+    def isatty(self):
+        return self._real.isatty()
+
 # 默认将 stdout/stderr 重定向到 loguru（可根据需要调用）
-sys.stdout = LoggerStream("DEBUG")
-sys.stderr = LoggerStream("ERROR")
+sys.stdout = LoggerStream("DEBUG", sys.stdout)
+sys.stderr = LoggerStream("ERROR", sys.stderr)
 
 # 自定义过滤器示例：只显示 summary 为 True 的记录
 def summary_filter(record):
@@ -400,14 +414,36 @@ def GetImageLanguageCandidates():
             candidates.append(lang)
     return candidates
 
+def FindFileCaseInsensitive(dir_path, filename):
+    """在 dir_path 下查找 filename, 大小写不一致也能找到.
+
+    历史上代码里引用的模板名大小写和实际图片文件名并不总是一致(如 "returnText" vs
+    "ReturnText.png"), 在不区分大小写的 Windows/Mac 文件系统上一直能跑, 到 Linux
+    (大小写敏感)就会直接 FileNotFoundError.
+    """
+    target = os.path.join(dir_path, filename)
+    if os.path.isfile(target):
+        return target
+    if not os.path.isdir(dir_path):
+        return None
+    filename_lower = filename.lower()
+    try:
+        for entry in os.listdir(dir_path):
+            if entry.lower() == filename_lower:
+                return os.path.join(dir_path, entry)
+    except OSError:
+        pass
+    return None
+
 def LoadTemplateImage(shortPathOfTarget):
     logger.debug(f"加载图片: {shortPathOfTarget}")
     image_filename = f"{shortPathOfTarget}.png"
     candidates = GetImageLanguageCandidates()
 
     for lang in candidates:
-        resource_path = ResourcePath(os.path.join(IMAGE_FOLDER, lang, image_filename))
-        if os.path.isfile(resource_path):
+        resource_dir = ResourcePath(os.path.join(IMAGE_FOLDER, lang))
+        resource_path = FindFileCaseInsensitive(resource_dir, image_filename)
+        if resource_path:
             if (lang != LANGUAGE_GAME) and (lang != 'common'):
                 logger.warning(f"图片 {shortPathOfTarget} 在语言 '{lang}' 下找到，但在当前语言 '{LANGUAGE_GAME}' 下未找到。")
             img = LoadImage(resource_path)
@@ -419,8 +455,10 @@ def LoadTemplateImage(shortPathOfTarget):
         image_filename,                          # mod/...
     ]
     for rel in mod_candidates:
-        mod_path = GetModPath(rel)
-        if os.path.isfile(mod_path):
+        rel_dir, rel_file = os.path.split(rel)
+        mod_dir = GetModPath(rel_dir)
+        mod_path = FindFileCaseInsensitive(mod_dir, rel_file)
+        if mod_path:
             logger.debug(f"在 mod 中找到图片: {mod_path}")
             img = LoadImage(mod_path)
             if img is not None:
