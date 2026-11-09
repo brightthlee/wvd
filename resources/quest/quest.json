@@ -656,6 +656,23 @@
         "questCategory_en_US": "Request Caves",
         "_TARGETINFOLIST":[
 	        ["chest_auto"],
+            ["mark_auto"],
+	        ["chest_auto"],
+            ["mark_auto"],
+	        ["chest_auto"],
+            ["mark_auto"],
+	        ["chest_auto"],
+            ["mark_auto"],
+	        ["chest_auto"],
+            ["mark_auto"],
+	        ["chest_auto"],
+            ["mark_auto"],
+	        ["chest_auto"],
+            ["mark_auto"],
+	        ["chest_auto"],
+            ["mark_auto"],
+	        ["chest_auto"],
+            ["mark_auto"],
             ["SSC/SSC_quit","左下","default"]
         ],
         "_EOT":[
