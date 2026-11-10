@@ -928,6 +928,24 @@
         ]
     },
 
+    "DOE":{
+        "_TYPE":"dungeon",
+        "questName":"[矿石]土洞",
+        "questName_en_US": "[Ore] Den of Earth",
+        "questCategory": "矿石",
+        "questCategory_en_US": "Ore",
+        "_EOT":[
+            ["town","EOT"],
+            ["L1","DOE"],
+            ["L2","DOEB1F"]
+        ],
+        "_TARGETINFOLIST":
+        [
+            ["chest_auto"],
+            ["DOE_quit"]
+        ]
+    },
+
     "LMG-GT":{
         "_TYPE":"dungeon",
         "questName":"[骨头]炉壶灵庙(王都出发)",
