@@ -1606,12 +1606,24 @@ def Factory():
                         Sleep(0.5)
                     Press([250,1500])
                     runtimeContext._ZOOMWORLDMAP = True
-                # 由于定位流程包含了返回键, 有时会退出到大地图, 因此强制执行RTT流程, 不管是否需要住宿.
-                # if setting.ACTIVE_REST and runtimeContext._MEET_CHEST_OR_COMBAT and ((runtimeContext._COUNTERDUNG-1) % (max(setting.REST_INTERVEL,1)) == 0):
+                # 定位流程包含了返回键, 有时会退出到大地图; 是否回城遵循与openworldmap相同的回城条件判断,
+                # 避免像SSC/SSC_quit这种退出后直接落在大地图的任务, 每次都强制回城而忽略REST_INTERVEL设置.
                 if quest._RTT:
-                    TeleportFromDungeonToCity(*quest._RTT)
-                    return IdentifyState()
-                       
+                    if (
+                            (
+                                setting.ACTIVE_REST
+                                and runtimeContext._MEET_CHEST_OR_COMBAT
+                                and ((runtimeContext._COUNTERDUNG-1) % (max(setting.REST_INTERVEL,1)) == 0)
+                            )
+                            or ShouldReassembleParty()
+                            or ShouldEmulatorRestart()
+                        ):
+                        TeleportFromDungeonToCity(*quest._RTT)
+                        return IdentifyState()
+                    else:
+                        logger.info(_("不满足回城条件, 跳过回城."))
+                        return State.EoT,DungeonState.Quit,screen
+
             if pos:=(CheckIf(screen,"openworldmap")):
                 if (
                         (
@@ -2122,11 +2134,14 @@ def Factory():
             if targetPos!=None:
                 return targetPos
         return targetPos
-    def StateMoving_CheckStop():
+    def StateMoving_CheckStop(reason=None):
         runtimeContext._RESUMEAVAILABLE = True
         lastscreen = None
         dungState = None
-        logger.info(_("面具男, 移动."))
+        if reason:
+            logger.info(_("面具男, 移动. (目标: {a})".format(a=reason)))
+        else:
+            logger.info(_("面具男, 移动."))
         while 1:
             Sleep(3)
             underscore, dungState,screen = IdentifyState()
@@ -2158,7 +2173,7 @@ def Factory():
         if CheckIf(map,"tooPoorToReadTheMap"):
             logger.info(_("在暴风雪中."))
             Press(CheckIf(map,"dungFlag",[[833-50, 287-50,100,100]]))
-            return StateMoving_CheckStop(),"FAIL"
+            return StateMoving_CheckStop(target),"FAIL"
     
         if not CheckIf(map,"mapFlag"):
             logger.info(_("没有检测到地图."))
@@ -2191,13 +2206,13 @@ def Factory():
             if target in normalPlace or target.endswith("_quit") or target.startswith("stair"):
                 Press(searchResult)
                 Press([136,1431]) # automove
-                return StateMoving_CheckStop(),"FAIL"
+                return StateMoving_CheckStop(target),"FAIL"
             else:
                 if (CheckIf_FocusCursor(ScreenShot(),target)): #注意 这里通过二次确认 我们可以看到目标地点 而且是未选中的状态
                     logger.info(_("经过对比中心区域, 确认没有抵达."))
                     Press(searchResult)
                     Press([136,1431]) # automove
-                    return StateMoving_CheckStop(), "FAIL"
+                    return StateMoving_CheckStop(target), "FAIL"
                 else:
                     logger.info(_("经过对比中心区域, 判断为抵达目标地点."))
                     return DungeonState.Map, "DONE"
@@ -2545,7 +2560,7 @@ def Factory():
 
                             Sleep(1)
                             Press(CheckIf(lastscreen,"resume")) # 立刻按一次resume 以兼容暴风雪场景.
-                            return StateMoving_CheckStop()
+                            return StateMoving_CheckStop(tar)
                         else:
                             return DungeonState.Map
                         
