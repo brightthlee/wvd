@@ -707,7 +707,7 @@ def Factory():
                     [GetADBPath(setting), "-s", serial, "exec-out",
                     cmd],
                     capture_output=True,
-                    timeout=5,
+                    timeout=15,
                     creationflags=CREATE_NO_WINDOW
                 )
 
