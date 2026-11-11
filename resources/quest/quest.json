@@ -679,7 +679,8 @@
             ["town","world"],
             ["worldmap","SSC/SSC","input swipe 827 1187 527 1421"]
         ],
-        "_RTT": ["City_fortress","input swipe 556 1383 856 971"]
+        "_RTT": ["City_fortress","input swipe 556 1383 856 971"],
+        "_TIPS":"mark exit in each area. 在每個區域的出口都放置標記" 
     },
 
     "LBC":{
