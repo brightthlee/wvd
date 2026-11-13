@@ -21,7 +21,7 @@ class AppController:
     后台消息队列由一个普通线程持续消费.
     """
 
-    def __init__(self, headless, config_path):
+    def __init__(self, headless, config_path, autostart=False):
         self.headless = headless
         self._stop = threading.Event()
         self.msg_queue = queue.Queue()
@@ -29,6 +29,8 @@ class AppController:
 
         if not headless:
             self.main_window = ConfigPanelApp(__version__, self.msg_queue)
+            if autostart:
+                self.main_window.start_quest()
         else:
             HeadlessActive(config_path, self.msg_queue)
 
@@ -202,13 +204,20 @@ def parse_args():
         help='配置文件路径 (例如: c:/config.json)',
     )
 
+    parser.add_argument(
+        '-autostart',
+        '--autostart',
+        action='store_true',
+        help='界面模式下启动后自动开始任务(无头模式本身就会自动开始, 此参数对无头模式无效)',
+    )
+
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
 
-    controller = AppController(args.headless, args.config)
+    controller = AppController(args.headless, args.config, args.autostart)
     controller.run()
 
 
