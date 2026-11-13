@@ -1687,7 +1687,7 @@ def Factory():
                         Sleep(7300)
                         restartGame()
                 if CheckIf(screen,"ambush") or CheckIf(screen,"ignore"):
-                    SaveImage()
+                    SaveImage(screen)
                     if not (CheckIf(screen,"ambush") and CheckIf(screen,"ignore")):
                         logger.error(_("错误. 无法进行善恶切换. 只能匹配善恶选项其中之一. 请提交该bug, 以及log中的错误截图."))
                         SaveImage(screen,prefix="善恶")
@@ -1815,15 +1815,27 @@ def Factory():
                 return pos
         return None
     def StateInn():
-        FindCoordsOrElseExecuteFallbackAndWait("Economy", ["Inn","Stay",[1,1]],2)
-        if setting.ACTIVE_ROYALSUITE_REST and CheckIf(ScreenShot(),"royalsuite"):
-            FindCoordsOrElseExecuteFallbackAndWait("OK",["Inn","Stay","royalsuite",[1,1]],2)
+        if ShouldReassembleParty():
+            ReassembleParty()
+            interval = max(setting.RE_ASSEMBLE_PARTY_INTERVAL, 1)
+            runtimeContext.REASSEMBLE_PARTY_PERIOD_INDEX = int(runtimeContext._TOTALTIME // (interval * 3600))
+        if not runtimeContext._MEET_CHEST_OR_COMBAT:
+            logger.info(_("因为没有遇到战斗或宝箱, 跳过住宿."))
+        elif not setting.ACTIVE_REST:
+            logger.info(_("因为面板设置, 跳过住宿."))
+        elif ((runtimeContext._COUNTERDUNG-1) % (max(setting.REST_INTERVEL,1)) != 0):
+            logger.info(_("还有许多地下城要刷. 面具男, 现在还不能休息哦."))
         else:
-            FindCoordsOrElseExecuteFallbackAndWait("OK",["Inn","Stay","Economy",[1,1]],2)
-        
-        FindCoordsOrElseExecuteFallbackAndWait("Stay",["OK",[299,1464]],2)
-        PressReturn()
-        runtimeContext.NEED_RECOVER_WHEN_REST = True
+            logger.info(_("休息时间到!"))
+            FindCoordsOrElseExecuteFallbackAndWait("Economy", ["Inn","Stay",[1,1]],2)
+            if setting.ACTIVE_ROYALSUITE_REST and CheckIf(ScreenShot(),"royalsuite"):
+                FindCoordsOrElseExecuteFallbackAndWait("OK",["Inn","Stay","royalsuite",[1,1]],2)
+            else:
+                FindCoordsOrElseExecuteFallbackAndWait("OK",["Inn","Stay","Economy",[1,1]],2)
+            
+            FindCoordsOrElseExecuteFallbackAndWait("Stay",["OK",[299,1464]],2)
+            PressReturn()
+            runtimeContext.NEED_RECOVER_WHEN_REST = True
     def StateEoT():
         runtimeContext._RESUMEAVAILABLE = False
 
@@ -2633,6 +2645,85 @@ def Factory():
             logger.info(_("奇怪, 任务怎么已经接了."))
             FindCoordsOrElseExecuteFallbackAndWait("Inn",["return","leave",[1,1]],1)
 
+    def QuestFarm_Bounty(name, target, chapter=None):
+        nonlocal runtimeContext
+        def resetBounty(target, chapter = None):
+            if not CheckIf(ScreenShot(),"bounty/cursewheel"):
+                Sleep(2)
+                RestartableSequenceExecution(
+                    # 万一程序重启/恢复时其实还停在地下城里, 要先触发leaveDung/returntotown回城,
+                    # 而不是对着地下城画面空找guild一直重启.
+                    lambda:Press(FindCoordsOrElseExecuteFallbackAndWait(["bounty/cursewheel","guildRequest"],["guild","leaveDung","returntotown","returnText","return",[1,1]],1)),
+                    lambda:Sleep(2),
+                    lambda:FindCoordsOrElseExecuteFallbackAndWait("bounty/cursewheel",["guild","guildRequest","close","bounty/Bounties","input swipe 600 1400 300 1400",[1,1]],1),
+                )
+            if pos:=CheckIf(ScreenShot(),"bounty/CompletionReported"):
+                Sleep(1)
+                Press(pos)
+                FindCoordsOrElseExecuteFallbackAndWait("bounty/cursewheel",[1,1],1)
+                Sleep(1)
+            FindCoordsOrElseExecuteFallbackAndWait("cursedWheelTitle",["bounty/cursewheel",[1,1]],1)
+            if chapter:
+                Sleep(1)
+                Press([100,1400])
+                FindCoordsOrElseExecuteFallbackAndWait(chapter,["input swipe 600 1400 300 1400",[1,1]],1)
+                Sleep(1)
+                Press(CheckIf(ScreenShot(),chapter))
+                Sleep(1)
+            if not Press(CheckIf(ScreenShot(),target)):
+                DeviceShell(f"input swipe 450 1200 450 200")
+                Sleep(2)
+                DeviceShell(f"input swipe 450 1200 450 200")
+                Sleep(2)
+                Press(FindCoordsOrElseExecuteFallbackAndWait(target,"input swipe 450 1200 450 1300",1))
+            Sleep(1)
+            Press(FindCoordsOrElseExecuteFallbackAndWait("bounty/reset",target,1))
+            FindCoordsOrElseExecuteFallbackAndWait("Inn",["returntotown","returnText","leaveDung","return",[1,1]],1)
+
+        while 1:
+            if GlobalStopEvent.is_set():
+                raise StopRequested()
+
+            starttime = time.time()
+            runtimeContext._COUNTERDUNG += 1
+            RestartableSequenceExecution(
+                lambda: resetBounty(target, chapter)
+            )
+            RestartableSequenceExecution(
+                lambda:StateEoT()
+            )
+            RestartableSequenceExecution(
+                lambda:StateDungeon([TargetInfo("mark_auto"),
+                                        TargetInfo("leaveDung")])
+                )
+            RestartableSequenceExecution(
+                # 若游戏重启后其实还停在地下城(leaveDung按钮可见), 先点它退回去,
+                # 而不是只按返回键空转直到"疑似卡死"又触发一次重启.
+                lambda:FindCoordsOrElseExecuteFallbackAndWait("Inn",["returntotown","returnText","leaveDung","return",[1,1]],2)
+            )
+            if setting.ACTIVE_REST and ((runtimeContext._COUNTERDUNG-1) % (setting.REST_INTERVEL+1) == 0):
+                RestartableSequenceExecution(
+                    lambda:StateInn()
+                    )
+            RestartableSequenceExecution(
+                lambda:Press(FindCoordsOrElseExecuteFallbackAndWait("guildRequest",["guild","leaveDung","returntotown","returnText",[1,1]],1)),
+                lambda:Sleep(2),
+                lambda:FindCoordsOrElseExecuteFallbackAndWait("bounty/cursewheel",["guild","guildRequest","close","bounty/Bounties","input swipe 600 1400 300 1400",[1,1]],1),
+            )
+            Sleep(1)
+            Press(CheckIf(ScreenShot(),"bounty/CompletionReported"))
+            RestartableSequenceExecution(
+                lambda:FindCoordsOrElseExecuteFallbackAndWait("bounty/cursewheel",[1,1],1)
+            )
+            costtime = time.time()-starttime
+            runtimeContext._TOTALTIME = runtimeContext._TOTALTIME + costtime
+            logger.info(
+                _("第{a}次\"{name}\"完成. \n该次花费时间{b:.2f}s.\n总计用时{c:.2f}s.\n平均用时{d:.2f}".format(name=name, a=runtimeContext._COUNTERDUNG,b=costtime, c=runtimeContext._TOTALTIME, d=runtimeContext._TOTALTIME/runtimeContext._COUNTERDUNG)),
+                summary=True,
+                summary_data=DefaultSummaryDict(),
+                summary_events=dict(getattr(runtimeContext, "_EVENT_COUNTERS", {}) or {}),
+            )
+
     def DungeonFarm():
         nonlocal runtimeContext
         state = None
@@ -2670,19 +2761,7 @@ def Factory():
                         # 模拟器重启后游戏回到标题界面, 重新做状态识别.
                         state = None
                         continue
-                    if ShouldReassembleParty():
-                        ReassembleParty()
-                        interval = max(setting.RE_ASSEMBLE_PARTY_INTERVAL, 1)
-                        runtimeContext.REASSEMBLE_PARTY_PERIOD_INDEX = int(runtimeContext._TOTALTIME // (interval * 3600))
-                    if not runtimeContext._MEET_CHEST_OR_COMBAT:
-                        logger.info(_("因为没有遇到战斗或宝箱, 跳过住宿."))
-                    elif not setting.ACTIVE_REST:
-                        logger.info(_("因为面板设置, 跳过住宿."))
-                    elif ((runtimeContext._COUNTERDUNG-1) % (max(setting.REST_INTERVEL,1)) != 0):
-                        logger.info(_("还有许多地下城要刷. 面具男, 现在还不能休息哦."))
-                    else:
-                        logger.info(_("休息时间到!"))
-                        RestartableSequenceExecution(
+                    RestartableSequenceExecution(
                         lambda:StateInn()
                         )
                     state = State.EoT
@@ -3336,64 +3415,25 @@ def Factory():
                         lambda: FindCoordsOrElseExecuteFallbackAndWait("Inn",["returntotown","returnText","leaveDung","blessing",[1,1]],2)
                     )
 
-                    if ((runtimeContext._COUNTERDUNG-1) % (setting.REST_INTERVEL+1) == 0):
-                        RestartableSequenceExecution(
-                            lambda: StateInn()
-                        )
+                    
+                    RestartableSequenceExecution(
+                        lambda: StateInn()
+                    )
             case "Scorpionesses":
-                if not CheckIf(ScreenShot(),"bounty/cursewheel"):
-                    RestartableSequenceExecution(
-                        lambda:Press(FindCoordsOrElseExecuteFallbackAndWait("guildRequest",["guild",[1,1]],1)),
-                        lambda:Sleep(2),
-                        lambda:FindCoordsOrElseExecuteFallbackAndWait("bounty/cursewheel",["guild","guildRequest","close","input swipe 600 1400 300 1400","bounty/Bounties",[1,1]],1),
-                    )
-
-                while 1:
-                    if GlobalStopEvent.is_set():
-                        raise StopRequested()
-
-                    starttime = time.time()
-                    runtimeContext._COUNTERDUNG += 1
-                    RestartableSequenceExecution(
-                        lambda:FindCoordsOrElseExecuteFallbackAndWait("cursedWheelTitle",["bounty/cursewheel",[1,1]],1),
-                        lambda:DeviceShell(f"input swipe 450 1200 450 200"),
-                        lambda:Sleep(2),
-                        lambda:DeviceShell(f"input swipe 450 1200 450 200"),
-                        lambda:Sleep(2),
-                        lambda:Press(FindCoordsOrElseExecuteFallbackAndWait("bounty/Scorpionesses","input swipe 50 1200 50 1300",1)),
-                        lambda:Sleep(1),
-                        lambda:Press(FindCoordsOrElseExecuteFallbackAndWait("bounty/reset","bounty/Scorpionesses",1)),
-                        lambda:FindCoordsOrElseExecuteFallbackAndWait("Inn","return",1),
-                    )
-                    RestartableSequenceExecution(
-                        lambda:FindCoordsOrElseExecuteFallbackAndWait("dungFlag",["EdgeOfTown","beginningAbyss","B2FTemple","GotoDung",[1,1]],1),
-                    )
-                    RestartableSequenceExecution(
-                        lambda:StateDungeon([TargetInfo("mark_auto"),
-                                             TargetInfo("leaveDung")])
-                        )
-                    RestartableSequenceExecution(
-                        lambda:FindCoordsOrElseExecuteFallbackAndWait("Inn","return",1)
-                    )
-                    RestartableSequenceExecution(
-                        lambda:Press(FindCoordsOrElseExecuteFallbackAndWait("guildRequest",["guild",[1,1]],1)),
-                        lambda:Sleep(2),
-                        lambda:FindCoordsOrElseExecuteFallbackAndWait("bounty/cursewheel",["guild","guildRequest","close","input swipe 600 1400 300 1400","bounty/Bounties",[1,1]],1),
-                    )
-                    RestartableSequenceExecution(
-                        lambda:Press(FindCoordsOrElseExecuteFallbackAndWait("bounty/CompletionReported",["guild","guildRequest","bounty/Bounties","input swipe 600 1400 300 1400",[1,1]],1))
-                        )
-                    RestartableSequenceExecution(
-                        lambda:FindCoordsOrElseExecuteFallbackAndWait("bounty/cursewheel",[1,1],1)
-                    )
-                    costtime = time.time()-starttime
-                    runtimeContext._TOTALTIME = runtimeContext._TOTALTIME + costtime
-                    logger.info(
-                        _("第{a}次\"悬赏:蝎女\"完成. \n该次花费时间{b:.2f}s.\n总计用时{c:.2f}s.\n平均用时{d:.2f}".format(a=runtimeContext._COUNTERDUNG,b=costtime, c=runtimeContext._TOTALTIME, d=runtimeContext._TOTALTIME/runtimeContext._COUNTERDUNG)),
-                        summary=True,
-                        summary_data=DefaultSummaryDict(),
-                        summary_events=dict(getattr(runtimeContext, "_EVENT_COUNTERS", {}) or {}),
-                    )
+                quest._EOT = [
+                    ["town","EOT"],
+                    ["L1","beginningAbyss"],
+                    ["L2","B2FTemple"]
+                ]
+                QuestFarm_Bounty(name="悬赏:蝎女",target="bounty/Scorpionesses")
+            case "WhoImperilHonor":
+                quest._EOT = [
+                    ["town","EOT"],
+                    ["L1","DH"],
+                    ["L2","DH-R9"]
+                ]
+                quest._SPECIALDIALOGOPTION = ["bounty/Slayhim"]
+                QuestFarm_Bounty(name="悬赏:威胁荣誉",target="bounty/WhoImperilHonor", chapter="bounty/DH")
             case "FloralHoney":
                 while 1:
                     if GlobalStopEvent.is_set():
