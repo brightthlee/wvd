@@ -1235,6 +1235,12 @@
                 <label class="switch"><input type="checkbox" id="reassembleParty" data-config="RE_ASSEMBLE_PARTY"><span class="track"></span></label>
               </div>
             </div>
+            <div class="row">
+              <div class="label" id="partyPositionRestoreLabel" data-i18n-zh="战斗后及开宝箱后自动恢复队伍站位" data-i18n-en="Auto-restore party formation after battle or opening a chest">战斗后及开宝箱后自动恢复队伍站位</div>
+              <div class="control">
+                <label class="switch"><input type="checkbox" id="partyPositionRestore" data-config="ACTIVE_PARTY_POSITION_RESTORE"><span class="track"></span></label>
+              </div>
+            </div>
           </div>
 
           <div class="card">
@@ -1947,6 +1953,12 @@
     if (logAutoScroll) logBody.scrollTop = logBody.scrollHeight;
   }
 
+  function applyPartyPositionRestoreLabel(lang) {
+    const el = $("#partyPositionRestoreLabel");
+    if (!el) return;
+    el.textContent = lang === "en_US" ? el.dataset.i18nEn : el.dataset.i18nZh;
+  }
+
   /* ================= 状态 -> 控件 ================= */
   const bindings = {
     DARK_THEME: (v) => {
@@ -1969,7 +1981,10 @@
     },
     ADB_ADRESS: (v) => { const el = $("#adbAddress"); if (el) el.value = v || ""; },
     EMU_INDEX: (v) => { const el = $("#emuIndex"); if (el) el.value = v == null ? 0 : v; },
-    LANGUAGE_SCRIPT: (v) => { const el = $("#langScript"); if (el) el.value = v || "zh_CN"; },
+    LANGUAGE_SCRIPT: (v) => {
+      const el = $("#langScript"); if (el) el.value = v || "zh_CN";
+      applyPartyPositionRestoreLabel(v);
+    },
     LANGUAGE_GAME: (v) => { const el = $("#langGame"); if (el) el.value = v || "zh_CN"; },
     QUICK_DISARM_CHEST: (v) => { const el = $("#quickChest"); if (el) el.checked = !!v; },
     WHO_WILL_OPEN_IT: (v) => { const el = $("#chestOpener"); if (el) el.value = String(v == null ? 0 : v); },
@@ -1981,6 +1996,7 @@
     REST_INTERVEL: (v) => { const el = $("#restInterval"); if (el) el.value = v == null ? 1 : v; },
     RE_ASSEMBLE_PARTY: (v) => { const el = $("#reassembleParty"); if (el) el.checked = !!v; },
     RE_ASSEMBLE_PARTY_INTERVAL: (v) => { const el = $("#reassembleInterval"); if (el) el.value = v == null ? 6 : v; },
+    ACTIVE_PARTY_POSITION_RESTORE: (v) => { const el = $("#partyPositionRestore"); if (el) el.checked = !!v; },
     ACTIVE_DIGGING: (v) => { const el = $("#zeroDigging"); if (el) el.checked = !!v; },
     ACTIVE_BEG_MONEY: (v) => { const el = $("#zeroBegMoney"); if (el) el.checked = !!v; },
     ACTIVE_FISHING: (v) => { const el = $("#zeroFishing"); if (el) el.checked = !!v; },

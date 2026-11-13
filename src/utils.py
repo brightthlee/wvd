@@ -441,6 +441,9 @@ def FindFileCaseInsensitive(dir_path, filename):
 
 def LoadTemplateImage(shortPathOfTarget):
     logger.debug(f"加载图片: {shortPathOfTarget}")
+    # 统一分隔符: 调用处可能写 "a\b" (Windows 习惯) 或 "a/b"; "/" 在 Windows 上同样合法,
+    # 转成 "/" 后两边文件系统都能正确解析, 不用在每个调用点改写路径.
+    shortPathOfTarget = shortPathOfTarget.replace("\\", "/")
     image_filename = f"{shortPathOfTarget}.png"
     candidates = GetImageLanguageCandidates()
 

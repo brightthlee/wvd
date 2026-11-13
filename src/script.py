@@ -73,6 +73,7 @@ CONFIG_VAR_LIST = [
             ["TEMPLATE",   "BYPASS_THE_WALL",                       tk.BooleanVar, False],
             ["TEMPLATE",   "RE_ASSEMBLE_PARTY",                     tk.BooleanVar, False],
             ["TEMPLATE",   "RE_ASSEMBLE_PARTY_INTERVAL",            tk.IntVar,     6],
+            ["TEMPLATE",   "ACTIVE_PARTY_POSITION_RESTORE",         tk.BooleanVar, True],
             ["TEMPLATE",   "ACTIVE_RESTART_EMU",                    tk.BooleanVar, False],
             ["TEMPLATE",   "MAXIMUM_TIME_INTERVALS_BETWEEN_RESTARTING_EMU",     tk.IntVar, 6],
             ]
@@ -126,6 +127,7 @@ class RuntimeContext:
     REASSEMBLE_PARTY_PERIOD_INDEX = 0
     RESTART_EMU_TIMESTAMP = None # 上次启动/重启模拟器的时间戳.
     _SKIP_SCREENSHOT_WARNING = False # 截图返回是否包含错误代码.
+    _PARTY_POSITION_BASELINE = None # 任务开始时记录的站位基准, 见RecordInitialPartyPositions().
 
     @staticmethod
     def record_special_event(name):
@@ -1115,6 +1117,14 @@ def Factory():
             logger.info(_("发现并点击了\"重试\". 你遇到了网络波动."))
             runtimeContext.record_special_event(_("网络波动"))
             return True
+        # "- Tap to Start -" 开场动画背景有光影/粒子抖动, 与模板的匹配度到不了CheckIf默认的0.8阈值,
+        # 因此单独放宽到0.6(对比无关画面的匹配度约0.4, 留有安全余量), 点一下屏幕中央进入游戏.
+        if CheckHow(scn,"tapToStart") >= 0.6:
+            Press([450,800])
+            logger.info(_("发现开场\"Tap to Start\"画面, 点击进入游戏."))
+            runtimeContext.record_special_event(_("点击开场画面"))
+            Sleep(1)
+            return True
         return False
     ##################################################################
     def _is_coord(x):
@@ -1814,6 +1824,116 @@ def Factory():
             if pos:=CheckIf(screen,combat, [[0,0,150,80]]):
                 return pos
         return None
+    ##################################################################
+    # 队伍站位调动模块.
+    # 队伍状态卡片面板左下角箭头用于展开/收起; 面板右下角"人+循环箭头"图标用于
+    # 进出站位编辑模式, 编辑模式下对两张角色卡片做拖动(swipe)即可交换站位.
+    # 地下城里卡片面板默认是展开的, 不需要调用OpenPartyPanel(); 王城里默认是收起的,
+    # 需要先调用OpenPartyPanel(). 面板展开/收起箭头在王城与地下城的画面位置不一样
+    # (地下城压根没有这个按钮, 本来就展开), 展开/收起两种状态图标的位置也不一样,
+    # 所以不能写死坐标, 要用模板匹配动态定位.
+    PARTY_REORDER_TOGGLE = [770, 1180]
+    PARTY_SLOT_COORDS = {
+        "左上": (165, 1285), "中上": (465, 1285), "右上": (765, 1285),
+        "左下": (165, 1465), "中下": (465, 1465), "右下": (765, 1465),
+    }
+    def OpenPartyPanel():
+        """展开队伍状态卡片面板(王城默认收起; 地下城通常已是展开状态, 不需要调用).
+        用模板匹配动态找"展开"箭头的位置再点, 返回是否成功(找不到说明可能已经是展开状态)."""
+        pos = CheckIf(ScreenShot(), "PartyPanelToggle_collapsed")
+        if not pos:
+            return False
+        Press(pos)
+        Sleep(1)
+        return True
+    def ClosePartyPanel():
+        """收起队伍状态卡片面板(王城用; 地下城默认展开, 一般不需要调用).
+        用模板匹配动态找"收起"箭头的位置再点, 返回是否成功(找不到说明可能已经是收起状态)."""
+        pos = CheckIf(ScreenShot(), "PartyPanelToggle_expanded")
+        if not pos:
+            return False
+        Press(pos)
+        Sleep(1)
+        return True
+    def TogglePartyReorderMode():
+        """进出站位编辑模式. 调用前面板必须已经展开(地下城默认展开, 王城先调用OpenPartyPanel())."""
+        Press(PARTY_REORDER_TOGGLE)
+        Sleep(1.5)
+    # 每个站位的"名字条"区域(卡片里角色名字所在的那一小条), 用作该站位此刻"是谁"的指纹图.
+    # 不用OCR读名字文字, 直接截图比对即可, 跟项目里其它地方做图像识别的方式一致.
+    PARTY_SLOT_NAME_ROI = {
+        "左上": (20, 1277, 260, 25), "中上": (320, 1277, 260, 25), "右上": (620, 1277, 260, 25),
+        "左下": (20, 1457, 260, 25), "中下": (320, 1457, 260, 25), "右下": (620, 1457, 260, 25),
+    }
+    def SwapPartySlots(slot_a, slot_b, max_attempts=4):
+        """交换两个站位上的角色, 自带进出编辑模式+失败重试(实测拖动偶尔不生效,
+        单次操作不可靠, 必须验证真的变了才能算数).
+        slot_a/slot_b 取值: "左上"/"中上"/"右上"/"左下"/"中下"/"右下".
+        面板必须已经展开(地下城默认展开; 王城先调用OpenPartyPanel()). 返回是否成功."""
+        x, y, w, h = PARTY_SLOT_NAME_ROI[slot_a]
+        before = ScreenShot()[y:y+h, x:x+w]
+        pos_a = PARTY_SLOT_COORDS[slot_a]
+        pos_b = PARTY_SLOT_COORDS[slot_b]
+        for attempt in range(1, max_attempts+1):
+            TogglePartyReorderMode()
+            DeviceShell(f"input swipe {pos_a[0]} {pos_a[1]} {pos_b[0]} {pos_b[1]} 800")
+            Sleep(1.5)
+            TogglePartyReorderMode()
+            after = ScreenShot()[y:y+h, x:x+w]
+            if cv2.matchTemplate(after, before, cv2.TM_CCOEFF_NORMED).max() < 0.9:
+                return True
+            logger.debug(f"站位交换{slot_a}<->{slot_b}第{attempt}次尝试似乎没生效, 重试.")
+        logger.error(_("站位交换{a}<->{b}重试{c}次后仍未生效.").format(a=slot_a, b=slot_b, c=max_attempts))
+        return False
+    def CapturePartySlotFingerprints():
+        """截取队伍面板当前六个站位的名字区域, 作为"此刻谁站在这里"的指纹图.
+        面板必须已经展开(可见HP/MP/SP卡片网格), 不需要进入编辑模式."""
+        scn = ScreenShot()
+        return {slot: scn[y:y+h, x:x+w].copy() for slot, (x, y, w, h) in PARTY_SLOT_NAME_ROI.items()}
+    def RecordInitialPartyPositions():
+        """任务开始时记录一次初始站位基准, 存进runtimeContext._PARTY_POSITION_BASELINE,
+        之后战斗/开箱后用RestorePartyPositions()比对复原. 如果当前不在王城, 先想办法回城
+        (复用leaveDung/returntotown等现有回城手段), 回城后再展开面板记录."""
+        if not CheckIf(ScreenShot(), "Inn"):
+            FindCoordsOrElseExecuteFallbackAndWait(
+                "Inn", ["returntotown", "returnText", "leaveDung", "return", [1, 1]], 2)
+        OpenPartyPanel()
+        baseline = CapturePartySlotFingerprints()
+        ClosePartyPanel()
+        runtimeContext._PARTY_POSITION_BASELINE = baseline
+        logger.info(_("已记录初始队伍站位."))
+        return baseline
+    def RestorePartyPositions(baseline_fingerprints):
+        """检查当前站位是否与baseline_fingerprints(由CapturePartySlotFingerprints()记录的
+        "正确站位"快照)一致, 不一致就自动交换复原. 返回是否做了复原.
+        只能在面板已展开的画面调用(地下城默认展开; 王城需要先OpenPartyPanel())."""
+        scn = ScreenShot()
+        # current_slot -> (该站位此刻的人在baseline里原本站哪, 匹配度)
+        current_to_baseline = {}
+        for cur_slot, (x, y, w, h) in PARTY_SLOT_NAME_ROI.items():
+            crop = scn[y:y+h, x:x+w]
+            best_slot, best_val = None, -1
+            for base_slot, fingerprint in baseline_fingerprints.items():
+                val = cv2.matchTemplate(crop, fingerprint, cv2.TM_CCOEFF_NORMED).max()
+                if val > best_val:
+                    best_slot, best_val = base_slot, val
+            current_to_baseline[cur_slot] = (best_slot, best_val)
+
+        if all(base == cur for cur, (base, val) in current_to_baseline.items()):
+            return False
+
+        logger.info(_("检测到队伍站位变动, 正在复原..."))
+        for slot, (base_slot, val) in current_to_baseline.items():
+            logger.debug(f"站位{slot}此刻是原本站{base_slot}的角色(匹配度{val:.2f}).")
+
+        remaining = dict(current_to_baseline)
+        for target_slot in PARTY_SLOT_NAME_ROI:
+            # 找出原本该站target_slot的人, 现在实际站在哪个槽位.
+            cur_holder = next(s for s, (base, val) in remaining.items() if base == target_slot)
+            if cur_holder != target_slot:
+                if SwapPartySlots(target_slot, cur_holder):
+                    remaining[target_slot], remaining[cur_holder] = remaining[cur_holder], remaining[target_slot]
+        return True
     def StateInn():
         if ShouldReassembleParty():
             ReassembleParty()
@@ -2432,6 +2552,7 @@ def Factory():
                             runtimeContext._TIME_COMBAT_TOTAL = runtimeContext._TIME_COMBAT_TOTAL + spend_on_combat
                             runtimeContext._TIME_CHEST_TOTAL = runtimeContext._TIME_CHEST_TOTAL + spend_on_chest
                     ########### RECOVER
+                    _hadChestOrCombatEvent = pendingChestEvent or pendingCombatEvent
                     if pendingChestEvent:
                         logger.info(_("处理已完成的宝箱事件."))
                         runtimeContext._COUNTERCHEST+=1
@@ -2454,6 +2575,10 @@ def Factory():
                             shouldRecover = True
                         else:
                             logger.info(_("由于面板配置, 跳过了战后恢复."))
+                    # 战斗/开箱有机会把队伍站位打乱, 有记录基准站位且面板勾选了此选项, 每次事件后都检查并复原.
+                    if (_hadChestOrCombatEvent and setting.ACTIVE_PARTY_POSITION_RESTORE
+                            and runtimeContext._PARTY_POSITION_BASELINE is not None):
+                        RestorePartyPositions(runtimeContext._PARTY_POSITION_BASELINE)
                     if setting.RECOVER_WHEN_BEGINNING and runtimeContext.NEED_RECOVER_WHEN_BEGINNING:
                         shouldRecover = True
                         runtimeContext.NEED_RECOVER_WHEN_BEGINNING = False
@@ -3420,6 +3545,9 @@ def Factory():
                         lambda: StateInn()
                     )
             case "Scorpionesses":
+                if setting.ACTIVE_PARTY_POSITION_RESTORE and runtimeContext._PARTY_POSITION_BASELINE is None:
+                    RestartableSequenceExecution(lambda: RecordInitialPartyPositions())
+
                 quest._EOT = [
                     ["town","EOT"],
                     ["L1","beginningAbyss"],
