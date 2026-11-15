@@ -2773,8 +2773,8 @@ def Factory():
     def QuestFarm_Bounty(name, target, chapter=None):
         nonlocal runtimeContext
         def resetBounty(target, chapter = None):
-            if not CheckIf(ScreenShot(),"bounty/cursewheel"):
-                Sleep(2)
+            FindCoordsOrElseExecuteFallbackAndWait(["guild","bounty/cursewheel"],[1,1],1)
+            if CheckIf(ScreenShot(),"guild"):
                 RestartableSequenceExecution(
                     # 万一程序重启/恢复时其实还停在地下城里, 要先触发leaveDung/returntotown回城,
                     # 而不是对着地下城画面空找guild一直重启.
