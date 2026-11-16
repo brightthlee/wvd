@@ -680,10 +680,18 @@ def Factory():
     
     def ScreenShot():
         try:
-            if "wizardry" not in DeviceShell("dumpsys window | grep mCurrentFocus"):
-                logger.error("游戏未启动!")
-            
-                restartGame(skip_screenshot=True)
+            focus = DeviceShell("dumpsys window | grep mCurrentFocus")
+            if "wizardry" not in focus:
+                # 游戏不在前台, 先分清是设备息屏/锁屏(唤醒即可)还是游戏真的不在了(需要重启游戏),
+                # 否则设备睡着时会一直误判成"游戏未启动"反复重启游戏, 而屏幕本身并没有亮.
+                wakefulness = DeviceShell("dumpsys power | grep mWakefulness=")
+                if ("Asleep" in wakefulness) or ("Dozing" in wakefulness):
+                    logger.error(_("检测到设备处于息屏/锁屏状态, 尝试唤醒."))
+                    DeviceShell("input keyevent KEYCODE_WAKEUP")
+                    Sleep(1)
+                else:
+                    logger.error("游戏未启动!")
+                    restartGame(skip_screenshot=True)
         except Exception as e:
             if isinstance(e,RestartSignal):
                 logger.error("截个图也能遇见崩溃吗...")
@@ -1426,6 +1434,7 @@ def Factory():
             FindCoordsOrElseExecuteFallbackAndWait("Inn", [[1,1],"worldmapflag","EVENT",target],2)
             return
 
+        logger.info(_("离开地下城, 回程"))
         FindCoordsOrElseExecuteFallbackAndWait(["dungFlag","worldmapflag","openworldmap","startdownload"],"openworldmap",1)
         scn = ScreenShot()
 
@@ -1980,6 +1989,7 @@ def Factory():
 
                 # 终点
                 if CheckIf(scn, "dungFlag"):
+                    logger.info(_("进入地下城"))
                     return
 
                 # 定位
@@ -2505,6 +2515,7 @@ def Factory():
                 case None:
                     s, dungState,scn = IdentifyState()
                     if (s == State.Inn) or (dungState == DungeonState.Quit):
+                        logger.info(_("离开地下城(退出状态)"))
                         logger.debug(_(f"本次地下城打开地图次数{gameFrozen_StateMapCounter}"))
                         break
 
@@ -2520,6 +2531,7 @@ def Factory():
                         logger.info(_("由于战斗用时过久, 在state:None中重启."))
                         restartGame()
                 case DungeonState.Quit:
+                    logger.info(_("离开地下城(退出状态)"))
                     logger.debug(_(f"本次地下城打开地图次数{gameFrozen_StateMapCounter}"))
                     break
                 case DungeonState.Dungeon:
@@ -2669,6 +2681,7 @@ def Factory():
                                 break
                     ########### 如果resume失败且为退出:
                     if dungState == DungeonState.Quit:
+                        logger.info(_("离开地下城(退出状态)"))
                         break
                     ########### 如果resume失败且为地下城
                     if dungState == DungeonState.Dungeon:
