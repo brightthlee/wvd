@@ -2007,6 +2007,99 @@ def Factory():
             FindCoordsOrElseExecuteFallbackAndWait("Stay",["OK",[299,1464]],2)
             PressReturn()
             runtimeContext.NEED_RECOVER_WHEN_REST = True
+    ##################################################################
+    # Dispatch module.
+    # Back in town, the Adventurer's Guild icon shows a blue dot when a dispatch has finished, but the same dot
+    # also shows for other things (e.g. a completed bounty). So the guild is entered first and only the dot next to
+    # the "Dispatch" entry decides whether anything is done. Every finished dispatch is sent out again with the same
+    # members (the "Redispatch" button); changing the members is left to the player.
+    # Screen positions below are for the 900x1600 screen the bot always runs at.
+    DISPATCH_BLUE_MIN_PIXELS = 100 # A blue dot is about 340 pixels, 0 when absent.
+    DISPATCH_MENU_BUTTON = [745, 358] # "Dispatch" entry of the guild menu.
+    DISPATCH_MENU_DOT_ROI = [563, 331, 50, 50] # Where the blue dot next to that entry is.
+    GUILD_MENU_EXIT = [745, 1000]
+    DISPATCH_LIST_BACK = [150, 1525]
+    def CountBlueDot(screenImage, roi):
+        x, y, w, h = roi
+        hsv = cv2.cvtColor(screenImage[max(y,0):y+h, max(x,0):x+w], cv2.COLOR_BGR2HSV)
+        mask = (hsv[:,:,0] >= 95) & (hsv[:,:,0] <= 125) & (hsv[:,:,1] > 150) & (hsv[:,:,2] > 170)
+        return int(mask.sum())
+    def DispatchWaitFor(names, timeout, interval = 2):
+        """Return (name, position) of the first template in names that is on screen, or (None, None) after timeout seconds."""
+        startTime = time.time()
+        while True:
+            if GlobalStopEvent.is_set():
+                raise StopRequested()
+            scn = ScreenShot()
+            for name in names:
+                if pos := CheckIf(scn, name):
+                    return name, pos
+            if time.time() - startTime >= timeout:
+                return None, None
+            Sleep(interval)
+    def DispatchBackToTown():
+        """Leave the dispatch screens and the guild until the town is on screen again. Returns True when it is."""
+        for underscore in range(8):
+            scn = ScreenShot()
+            if CheckIf(scn, "Inn"):
+                return True
+            if CheckIf(scn, "dispatch/RequestList"):
+                Press(DISPATCH_LIST_BACK)
+            elif CheckIf(scn, "guildRequest"):
+                Press(GUILD_MENU_EXIT)
+            else:
+                PressReturn()
+            Sleep(3)
+        return False
+    def StateDispatch():
+        """Send every finished dispatch out again. Returns how many were sent."""
+        scn = ScreenShot()
+        guildPos = CheckIf(scn, "guild")
+        if not guildPos:
+            return 0
+        # The dot on the town icon: 48 pixels right of and 99 pixels above the centre of the guild label.
+        if CountBlueDot(scn, [guildPos[0]+48-30, guildPos[1]-99-30, 60, 60]) < DISPATCH_BLUE_MIN_PIXELS:
+            return 0
+
+        logger.info(_("冒险者公会有蓝点, 进入公会检查派遣."))
+        Press([guildPos[0]-5, guildPos[1]-54]) # The guild icon, just above its label.
+        name, underscore = DispatchWaitFor(["guildRequest"], 20)
+        if name is None:
+            logger.info(_("没有进入公会菜单, 放弃检查派遣."))
+            DispatchBackToTown()
+            return 0
+
+        if CountBlueDot(ScreenShot(), DISPATCH_MENU_DOT_ROI) < DISPATCH_BLUE_MIN_PIXELS:
+            logger.info(_("公会里派遣没有蓝点(蓝点来自别的事项), 不处理派遣."))
+            DispatchBackToTown()
+            return 0
+
+        Press(DISPATCH_MENU_BUTTON)
+        sent = 0
+        for underscore in range(10): # One report per round; ten is far more than there are dispatch slots.
+            name, pos = DispatchWaitFor(["dispatch/Redispatch", "dispatch/RequestList"], 60)
+            if name != "dispatch/Redispatch":
+                break # The request list means every report has been dealt with; None means something is off.
+            Press(pos)
+            sent += 1
+            logger.info(_("重新派遣第{a}批.".format(a=sent)))
+            runtimeContext.record_special_event(_("重新派遣"))
+            # A message "... leave the Adventurer's Guild with the client." shows up a moment later and has to be
+            # tapped away. Tapping the screen centre does nothing, tapping the corner does.
+            DispatchWaitFor(["dispatch/LeaveMsg"], 20)
+            Sleep(1)
+            Press([1,1])
+            # Wait until the old report is gone, otherwise it would be redispatched twice.
+            for underscore2 in range(10):
+                if not CheckIf(ScreenShot(), "dispatch/Redispatch"):
+                    break
+                Sleep(2)
+
+        DispatchWaitFor(["dispatch/RequestList"], 30)
+        if not DispatchBackToTown():
+            logger.error(_("派遣处理完后没有回到城镇."))
+        logger.info(_("派遣检查结束, 共重新派遣{a}批.".format(a=sent)))
+        return sent
     def StateEoT():
         runtimeContext._RESUMEAVAILABLE = False
 
@@ -2965,6 +3058,18 @@ def Factory():
                         continue
                     RestartableSequenceExecution(
                         lambda:StateInn()
+                        )
+                    def _dispatchSafely():
+                        # Dispatch is a side task: a failure in it (e.g. templates missing for another game language)
+                        # must not stop the farm.
+                        try:
+                            StateDispatch()
+                        except (RestartSignal, StopRequested):
+                            raise
+                        except Exception as e:
+                            logger.error(_("派遣模块出错, 已跳过: {a}".format(a=e)))
+                    RestartableSequenceExecution(
+                        lambda:_dispatchSafely()
                         )
                     state = State.EoT
                 case State.EoT:
