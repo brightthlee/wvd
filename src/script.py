@@ -119,6 +119,8 @@ class RuntimeContext:
     _CRASHCOUNTER = 0
     _IMPORTANTINFO = ""
     _RESUMEAVAILABLE = False
+    _TRAVEL = None # Screen position of the altar "Travel" button to press the next time the Harken menu shows up (see the "travel" target).
+    _TRAVEL_DONE = False # Set by IdentifyState once the Travel button has been pressed, consumed by StateDungeon.
     _RESUMERE_TRY_COUNTER = 0 # 连续点击resume的次数, 多次点击会重启游戏.
     _BYPASSAFTERRESTART = True
     CURRENT_STRATEGY = {}
@@ -147,6 +149,7 @@ class FarmQuest:
     _TYPE = None
     _RTT = None # Return To Town, 回程时执行的流程
     _TIPS = None
+    _NOROUTE_DONE = False # When a position target is clicked and the game reports "route cannot be found", treat that target as done (for cells that cannot be stood on, such as teleporters).
 
     def __getattr__(self, name):
         # 当访问不存在的属性时，抛出AttributeError
@@ -901,6 +904,25 @@ def Factory():
             if mean_diff<0.2:
                 return True
         return False
+    def CheckIf_ResumeEnabled(screenImage):
+        """Return the position of the resume button, or None if it is dimmed (disabled).
+        After a game restart the resume button is dimmed and pressing it does nothing, yet the
+        template still matches at about 95%, so the brightness has to be checked as well.
+        Measured mean gray level of the button area: about 63 when enabled, about 36 when dimmed."""
+        pos = CheckIf(screenImage, "resume")
+        if not pos:
+            return None
+        h, w = LoadTemplateImage("resume").shape[:2]
+        x0, y0 = int(pos[0] - w // 2), int(pos[1] - h // 2)
+        patch = screenImage[max(y0, 0):y0 + h, max(x0, 0):x0 + w]
+        if patch.size == 0:
+            return pos
+        brightness = float(cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY).mean())
+        logger.debug(f"resume按钮亮度: {brightness:.1f}")
+        if brightness < 50:
+            logger.info(_("resume按钮是暗的(亮度{a:.1f}), 视为不可用.".format(a=brightness)))
+            return None
+        return pos
     def CheckIf_ReachPosition(screenImage,targetInfo : TargetInfo):
         screenshot = screenImage
         position = targetInfo.roi
@@ -1597,6 +1619,16 @@ def Factory():
                 for underscore in range(5):
                     Press([400+random.randint(0,100),750+random.randint(0,100)])
                     Sleep(1)
+
+            if runtimeContext._TRAVEL and CheckIf(screen, "returnText"):
+                # The Harken menu is open. Press the Travel button at its fixed position instead of Return.
+                logger.info(_("在哈肯选择传送: {a}".format(a=runtimeContext._TRAVEL)))
+                Press(runtimeContext._TRAVEL)
+                runtimeContext._TRAVEL = None
+                runtimeContext._TRAVEL_DONE = True
+                runtimeContext._RESUMEAVAILABLE = False # resume would point at the old floor.
+                Sleep(2)
+                return IdentifyState()
 
             if Press(CheckIf(screen, "returnText")):
                 Sleep(2)
@@ -2371,6 +2403,13 @@ def Factory():
             if target in normalPlace or target.endswith("_quit") or target.startswith("stair"):
                 Press(searchResult)
                 Press([136,1431]) # automove
+                if target == "position" and quest._NOROUTE_DONE:
+                    # For cells that cannot be stood on (e.g. teleporters), clicking the same cell again after the teleport makes the game report "route cannot be found".
+                    # If walking is interrupted by combat, a chest or post-combat recovery, StateDungeon presses resume to continue (see CheckIf_ResumeEnabled for a dimmed resume button).
+                    Sleep(1)
+                    if CheckIf(ScreenShot(),"theRouteToTheDestinationCannotBeFound"):
+                        logger.info(_("找不到前往目标地点的路径, 判定该定点已完成."))
+                        return DungeonState.Map, "DONE"
                 return StateMoving_CheckStop(target),"FAIL"
             else:
                 if (CheckIf_FocusCursor(ScreenShot(),target)): #注意 这里通过二次确认 我们可以看到目标地点 而且是未选中的状态
@@ -2653,7 +2692,7 @@ def Factory():
                             runtimeContext._BYPASSAFTERRESTART = True
                     ########### 尝试resume
                     not_moving = False
-                    if runtimeContext._RESUMEAVAILABLE and (resumePos := CheckIf(ScreenShot(),"resume")):
+                    if runtimeContext._RESUMEAVAILABLE and (resumePos := CheckIf_ResumeEnabled(ScreenShot())):
                         runtimeContext._RESUMERE_TRY_COUNTER += 1
                         if runtimeContext._RESUMERE_TRY_COUNTER > 20:
                             logger.info(_("连续点击resume超过20次, 疑似卡住. 重启游戏."))
@@ -2692,6 +2731,11 @@ def Factory():
                     if dungState == DungeonState.Dungeon:
                         dungState = DungeonState.Map
                 case DungeonState.Map:
+                    # The altar's Travel button was pressed (see IdentifyState): the travel target is finished, continue with the next floor.
+                    if runtimeContext._TRAVEL_DONE:
+                        runtimeContext._TRAVEL_DONE = False
+                        if targetInfoList and targetInfoList[0].target == "travel":
+                            TargetPointComplete()
                     ########### 卡死检测
                     gameFrozen_StateMapCounter +=1
                     if gameFrozen_StateMapCounter > GAMEFROZEN_STATEMAPLIMIT:
@@ -2704,14 +2748,17 @@ def Factory():
                             Sleep(2)
                             return None
                         
-                        if targetInfoList[0] and ((tar:=targetInfoList[0].target) in ["chest_auto","mark_auto", "leaveDung"]):
+                        if targetInfoList[0] and ((tar:=targetInfoList[0].target) in ["chest_auto","mark_auto", "leaveDung", "travel"]):
+                            # "travel" walks to the exit like "leaveDung", but presses the altar's Travel button at position roi instead of Return.
+                            runtimeContext._TRAVEL = targetInfoList[0].roi if tar == "travel" else None
+                            iconName = "leaveDung" if tar == "travel" else tar
                             lastscreen = ScreenShot()
-                            if not Press(CheckIf(lastscreen,tar,[[720,250,150,180]])):
+                            if not Press(CheckIf(lastscreen,iconName,[[720,250,150,180]])):
                                 Press(CheckIf(lastscreen,"mapflag"))
                                 Press([762,346]) # 认为是没有展开菜单
                                 Sleep(1)
                                 lastscreen = ScreenShot()
-                                if not Press(CheckIf(lastscreen,tar,[[720,250,150,180]])):
+                                if not Press(CheckIf(lastscreen,iconName,[[720,250,150,180]])):
                                     return None # 如果我们两次检测失败, 认为发生了异常
 
                             if tar == "chest_auto":
@@ -2732,7 +2779,7 @@ def Factory():
                                     return DungeonState.Dungeon
 
                             Sleep(1)
-                            Press(CheckIf(lastscreen,"resume")) # 立刻按一次resume 以兼容暴风雪场景.
+                            Press(CheckIf_ResumeEnabled(lastscreen)) # Press resume once right away, to cover the blizzard scenario.
                             return StateMoving_CheckStop(tar)
                         else:
                             return DungeonState.Map
