@@ -684,6 +684,53 @@
         "_TIPS":"mark exit in each area. 在每個區域的出口都放置標記" 
     },
 
+    "NC_all":{
+        "_TYPE":"dungeon",
+        "_NOROUTE_DONE":true,
+        "questName":"[精英]北穿城全层",
+        "questName_en_US": "[Elite] Ghost Castle of the Northcleft all floors",
+        "questCategory": "任务洞窟",
+        "questCategory_en_US": "Request Caves",
+        "_TARGETINFOLIST":[
+            ["position","左上",[348,876]],
+            ["position","左上",[28,290]],
+            ["position","右上",[871,290]],
+            ["travel",null,[450,778]],
+            ["position","左下",[668,921]],
+            ["position","右下",[871,921]],
+            ["position","左上",[295,663]],
+            ["travel",null,[450,885]],
+            ["position","左下",[28,334]],
+            ["position","左上",[28,1036]],
+            ["position","左下",[28,1240]],
+            ["position","右下",[871,1240]],
+            ["travel",null,[450,992]],
+            ["position","右上",[391,823]],
+            ["position","左上",[401,929]],
+            ["position","左上",[188,769]],
+            ["position","左上",[241,1142]],
+            ["position","左上",[668,663]],
+            ["position","右下",[764,867]],
+            ["position","右上",[711,610]],
+            ["position","右上",[391,929]],
+            ["position",[[6,1262,700,250]],[508,1134]],
+            ["position",[[6,1262,700,250]],[28,1080]],
+            ["travel",null,[450,1098]],
+            ["position","左上",[33,1036]],
+            ["position","左下",[82,1134]],
+            ["position","右下",[817,654]],
+            ["position","右下",[817,1134]],
+            ["leaveDung"]
+        ],
+        "_EOT":[
+            ["town","world"],
+            ["worldmap","NC/NC","input swipe 740 1000 740 1300"],
+            ["L1","NC/ZONE1"]
+        ],
+        "_RTT": ["City_RoyalCityLuknalia","input swipe 400 400 500 300",[500,1100]],
+        "_TIPS":"从 Zone 1 进入, 每层从哈肯出发击败红圈精英怪, 回到哈肯后直接传送到下一层, 直到 Zone 5, 最后从哈肯离开.\nEnter via Zone 1. On each floor, defeat the red-circled elites starting from Harken, then travel from Harken straight to the next floor, up to Zone 5, and leave from Harken at the end."
+    },
+
     "LBC":{
         "_TYPE":"dungeon",
         "questName":"[宝箱]卢比肯宝箱",
