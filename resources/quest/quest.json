@@ -687,6 +687,7 @@
     "NC_all":{
         "_TYPE":"dungeon",
         "_NOROUTE_DONE":true,
+        "_KEEP_PROGRESS":true,
         "questName":"[精英]北穿城全层",
         "questName_en_US": "[Elite] Ghost Castle of the Northcleft all floors",
         "questCategory": "任务洞窟",

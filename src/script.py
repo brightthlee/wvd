@@ -149,6 +149,7 @@ class FarmQuest:
     _TYPE = None
     _RTT = None # Return To Town, 回程时执行的流程
     _TIPS = None
+    _KEEP_PROGRESS = False # Keep the remaining targets when the game is restarted inside the dungeon, instead of starting the target list over (for long multi-floor quests).
     _NOROUTE_DONE = False # When a position target is clicked and the game reports "route cannot be found", treat that target as done (for cells that cannot be stood on, such as teleporters).
 
     def __getattr__(self, name):
@@ -2518,8 +2519,10 @@ def Factory():
                 return DungeonState.Combat
             
             TryPressRetry(scn)
-    def StateDungeon(originalTargetInfoList : list[TargetInfo]):
-        targetInfoList = copy.deepcopy(originalTargetInfoList)
+    def StateDungeon(originalTargetInfoList : list[TargetInfo], keepProgress = False):
+        # By default every call works on its own copy, so a restart re-runs the whole list.
+        # With keepProgress the caller's list is used directly: finished targets stay removed across restarts.
+        targetInfoList = originalTargetInfoList if keepProgress else copy.deepcopy(originalTargetInfoList)
         gameFrozen_StateNoneScreenHistory = []
         gameFrozen_StateMapCounter = 0
         GAMEFROZEN_STATEMAPLIMIT = 20+20*len(targetInfoList)
@@ -2529,7 +2532,7 @@ def Factory():
         pendingChestEvent = False
 
         nonlocal runtimeContext
-        runtimeContext.TASK_STEP_INDEX = 0
+        runtimeContext.TASK_STEP_INDEX = (len(quest._TARGETINFOLIST) - len(targetInfoList)) if keepProgress else 0
         def TargetPointComplete():
             logger.info(f"任务点完成: {targetInfoList[0].target} {targetInfoList[0].roi if targetInfoList[0].target!='chest' else ''}")
 
@@ -2964,9 +2967,12 @@ def Factory():
                     # 首次进入地下城
                     DungeonCompletionCounter()
                     logger.info(_("创建任务点列表."))
-                    targetInfoList = quest._TARGETINFOLIST.copy()
+                    if quest._KEEP_PROGRESS:
+                        targetInfoList = copy.deepcopy(quest._TARGETINFOLIST)
+                    else:
+                        targetInfoList = quest._TARGETINFOLIST.copy()
                     RestartableSequenceExecution(
-                        lambda: StateDungeon(targetInfoList)
+                        lambda: StateDungeon(targetInfoList, keepProgress=quest._KEEP_PROGRESS)
                         )
                     state = None
         if setting._FINISHINGCALLBACK:
