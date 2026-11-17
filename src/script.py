@@ -1145,6 +1145,20 @@ def Factory():
         rows = set(np.nonzero((gray[400:1100, 140:760] > 60).mean(axis=1) > 0.85)[0])
         starts = sorted(y for y in rows if y - 1 not in rows)
         return gray.mean() < 70 and len(starts) == 2 and abs(starts[1] - starts[0] - 372) <= 6
+    def IsReturnToTitleDialog(scn):
+        """True on the one-button dialog that sends the game back to the title page: connection lost, session expired,
+        language changed on another device. It can come up on any screen, so only the dialog frame itself is looked at:
+        bright full-width border lines about 380 px apart (y 610 and 990) and a single button in the middle of the frame.
+        The wording differs per language, the frame and the button position do not."""
+        gray = cv2.cvtColor(scn, cv2.COLOR_BGR2GRAY).astype(float)
+        def borderLine(y0, y1, inside0, inside1):
+            return ((gray[y0:y1].max(axis=0) - gray[inside0:inside1].mean(axis=0)) > 25).mean() > 0.8
+        if not (borderLine(606, 614, 616, 624) and borderLine(986, 994, 972, 982)):
+            return False
+        # A two-button dialog has a button where the sides are compared, so it does not match.
+        row = gray[870:925]
+        centre = row[:, 340:560].mean()
+        return centre > row[:, 60:300].mean() + 35 and centre > row[:, 600:840].mean() + 35
     def TryPressRetry(scn):
         if Press(CheckIf(scn,"startdownload")):
             logger.info(_("开始下载……"))
@@ -1165,6 +1179,12 @@ def Factory():
             logger.info(_("发现开场免责声明画面, 点击进入下一页."))
             runtimeContext.record_special_event(_("点击开场画面"))
             Sleep(1)
+            return True
+        if IsReturnToTitleDialog(scn):
+            Press([449,897])
+            logger.info(_("发现需要返回标题画面的提示(断线/登录过期等), 点击按钮."))
+            runtimeContext.record_special_event(_("网络波动"))
+            Sleep(2)
             return True
         # The title page ("Tap to Start") shows three small icons (mail, settings, bell) in the top-left corner
         # that appear on no other page. Matching them is much more reliable than matching the "Tap to Start" text,
@@ -1878,9 +1898,6 @@ def Factory():
                     Press(CheckIf(screen,"skull"))
                     Sleep(2)
 
-                if Press(CheckIf(screen,"totitle")):
-                    logger.info(_("网络故障警报! 网络故障警报! 返回标题, 重复, 返回标题!"))
-                    return IdentifyState()
                 PressReturn()
                 Sleep(0.5)
                 PressReturn()
@@ -4286,7 +4303,7 @@ def Factory():
                         raise StopRequested()
 
                     scn = ScreenShot()
-                    if TryPressRetry(scn) or Press(CheckIf(scn,"totitle")):
+                    if TryPressRetry(scn):
                         logger.info("网络故障, 重试中......")
                         Sleep(1)
                         continue
