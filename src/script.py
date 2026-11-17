@@ -1148,9 +1148,18 @@ def Factory():
             logger.info(_("发现并点击了\"重试\". 你遇到了网络波动."))
             runtimeContext.record_special_event(_("网络波动"))
             return True
-        # "- Tap to Start -" 开场动画背景有光影/粒子抖动, 与模板的匹配度到不了CheckIf默认的0.8阈值,
-        # 因此单独放宽到0.6(对比无关画面的匹配度约0.4, 留有安全余量), 点一下屏幕中央进入游戏.
-        if CheckHow(scn,"tapToStart") >= 0.6:
+        # After a game launch the disclaimer page ("Attention - This story is fictional...") stays on screen
+        # until it is tapped, then the title page follows. Without this the bot just keeps re-checking the screen.
+        if CheckIf(scn,"disclaimer",[[200,400,500,300]]):
+            Press([450,800])
+            logger.info(_("发现开场免责声明画面, 点击进入下一页."))
+            runtimeContext.record_special_event(_("点击开场画面"))
+            Sleep(1)
+            return True
+        # The title page ("Tap to Start") shows three small icons (mail, settings, bell) in the top-left corner
+        # that appear on no other page. Matching them is much more reliable than matching the "Tap to Start" text,
+        # whose background keeps moving: the text template only scored 0.2 to 0.5 against the real title page.
+        if CheckIf(scn,"titleIcons",[[0,0,200,400]]):
             Press([450,800])
             logger.info(_("发现开场\"Tap to Start\"画面, 点击进入游戏."))
             runtimeContext.record_special_event(_("点击开场画面"))
