@@ -119,6 +119,7 @@ class RuntimeContext:
     _CRASHCOUNTER = 0
     _IMPORTANTINFO = ""
     _RESUMEAVAILABLE = False
+    _LANGUAGE_CHECKS_LEFT = 3 # The game language is checked at most this many times per run (see EnsureGameLanguage).
     _TRAVEL = None # Screen position of the altar "Travel" button to press the next time the Harken menu shows up (see the "travel" target).
     _TRAVEL_DONE = False # Set by IdentifyState once the Travel button has been pressed, consumed by StateDungeon.
     _RESUMERE_TRY_COUNTER = 0 # 连续点击resume的次数, 多次点击会重启游戏.
@@ -1135,6 +1136,15 @@ def Factory():
     def MinusImage(image,r,g,b):
         scn_b = image - np.array([b, g, r])
         return np.clip(scn_b, 0, 255).astype(np.uint8)
+    def IsDisclaimerPage(scn):
+        """True on the disclaimer page that follows a game launch ("Attention - This story is fictional...").
+        The page has two long thin horizontal divider lines exactly 372 pixels apart on a dark gradient, in every
+        game language, so the text itself is not needed (a text template only works for one language)."""
+        gray = cv2.cvtColor(scn, cv2.COLOR_BGR2GRAY)
+        # A divider row is bright over most of the width. 60 also catches the page while it is still fading in.
+        rows = set(np.nonzero((gray[400:1100, 140:760] > 60).mean(axis=1) > 0.85)[0])
+        starts = sorted(y for y in rows if y - 1 not in rows)
+        return gray.mean() < 70 and len(starts) == 2 and abs(starts[1] - starts[0] - 372) <= 6
     def TryPressRetry(scn):
         if Press(CheckIf(scn,"startdownload")):
             logger.info(_("开始下载……"))
@@ -1150,7 +1160,7 @@ def Factory():
             return True
         # After a game launch the disclaimer page ("Attention - This story is fictional...") stays on screen
         # until it is tapped, then the title page follows. Without this the bot just keeps re-checking the screen.
-        if CheckIf(scn,"disclaimer",[[200,400,500,300]]):
+        if IsDisclaimerPage(scn):
             Press([450,800])
             logger.info(_("发现开场免责声明画面, 点击进入下一页."))
             runtimeContext.record_special_event(_("点击开场画面"))
@@ -1589,6 +1599,54 @@ def Factory():
         logger.info(_("准备切换到任务\"{a}\".".format(a=target)), summary=True)
         setting._MSGQUEUE.put(("switch_quest", target))
         raise SystemExit
+    ##################################################################
+    # Game language module. When the text language of the game differs from LANGUAGE_GAME the text templates cannot be
+    # found, so the bot changes it in the game: party panel arrow, gear, "Select language", text dropdown, language,
+    # OK, confirm. The confirm logs out and the game goes back to the login pages, which the bot already handles.
+    # The menus and the order of the dropdown (Japanese, English, Simplified, Traditional, Korean) are the same in every
+    # game language, so everything is tapped at fixed positions of the 900x1600 screen. Only the decision that the
+    # language is wrong uses text: the town labels of the configured language.
+    def EnsureGameLanguage(scn):
+        """Called on town screens. Switches the game language when it is wrong. Returns True if it was switched."""
+        # Normally the first check decides; the others cover a switch that was aborted or a login still in progress.
+        if runtimeContext._LANGUAGE_CHECKS_LEFT <= 0:
+            return False
+        runtimeContext._LANGUAGE_CHECKS_LEFT -= 1
+        try:
+            # Second best of three: 0.95 or more in the right language, 0.75 or less in a wrong one, so one label that
+            # looks alike in another language (EdgeOfTown scores 0.81 in Traditional Chinese) cannot decide it.
+            if sorted(CheckHow(scn, label) for label in ["Inn", "guild", "EdgeOfTown"])[-2] >= 0.85:
+                return False
+        except FileNotFoundError:
+            return False # No labels for this language, nothing to compare with.
+        optionPos = {"en_US": [305, 827], "zh_CN": [313, 893]}.get(LANGUAGE_GAME)
+        if optionPos is None:
+            logger.error(_("不支持自动切换到游戏语言{a}.".format(a=LANGUAGE_GAME)))
+            return False
+        logger.info(_("游戏语言与设置({a})不一致, 自动切换游戏语言.".format(a=LANGUAGE_GAME)))
+
+        def step(pos, wait):
+            # Every tap has to change the screen, otherwise stop before the next tap lands on something else.
+            small = lambda: cv2.resize(cv2.cvtColor(ScreenShot(), cv2.COLOR_BGR2GRAY), (90, 160)).astype(float)
+            before = small()
+            Press(pos)
+            Sleep(wait)
+            return float(np.abs(small() - before).mean()) > 2
+
+        if pos := CheckIf(scn, "PartyPanelToggle_collapsed"): # The panel stays open, so only open it when it is shut.
+            step(pos, 2)
+        for number, (pos, wait) in enumerate([([553, 1170], 3), ([622, 408], 3), ([636, 683], 2),
+                                              (optionPos, 2), ([607, 1060], 3), ([607, 945], 5)], 1):
+            if not step(pos, wait):
+                logger.error(_("切换游戏语言在第{a}步没有看到画面变化, 放弃.".format(a=number)))
+                for underscore in range(3):
+                    PressReturn()
+                    Sleep(1)
+                return False
+        # The game logs out, which resets what a restart resets.
+        runtimeContext._COMBATSPD = False
+        runtimeContext._ZOOMWORLDMAP = False
+        return True
     def IdentifyState():
         nonlocal setting # 修改因果
         nonlocal runtimeContext # 特殊事件
@@ -1606,6 +1664,10 @@ def Factory():
             if Press(CheckIf(screen,"startdownload",[[222,901,465,84]])):
                 logger.info(_("确认, 下载, 确认."))
                 Sleep(2)
+
+            # intoWorldMap is the round map button of the town, the same in every language.
+            if CheckIf(screen, "intoWorldMap", [[700,1420,200,180]]) and EnsureGameLanguage(screen):
+                return IdentifyState()
 
             identifyConfig = [
                 ("dungFlag",      DungeonState.Dungeon),
