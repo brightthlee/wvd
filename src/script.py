@@ -1465,6 +1465,38 @@ def Factory():
                 "col_3_total_time": round(runtimeContext._TIME_COMBAT_TOTAL, 2),
             }
 
+    WORLDMAP_QUEST_SWIPES = 3 # How many times the quest's own swipe is tried before the clockwise tour starts.
+    WORLDMAP_TOUR_LAPS = 2
+    # One lap of the clockwise tour: the view moves right, down, left, up, so wherever the map was left it ends up
+    # touching all four edges and every part of it passes the screen. Each entry is a finger swipe and its count.
+    WORLDMAP_TOUR = [("input swipe 700 800 300 800", 4), ("input swipe 450 1100 450 500", 4),
+                     ("input swipe 300 800 700 800", 4), ("input swipe 450 500 450 1100", 4)]
+    def SwipeWorldMapUntilVisible(target, swipe, press_any_key):
+        """Looks for the target on the world map before the search below does. The world map opens where it was
+        left (e.g. at Deepsnow after a trip there), while a quest's swipe assumes the default start, so that swipe
+        alone can push the map into its edge and never reach the target. So the quest's own swipe is used a few times
+        first (exactly what the search below does, so quests that find the target that way behave as before), then the
+        view is dragged around the map in a clockwise tour until the target shows up."""
+        def visible():
+            scn = ScreenShot()
+            return bool(CheckIf(scn, target) or CheckIf(scn, "openworldmap") or CheckIf(scn, "dungflag"))
+        if visible():
+            return
+        for underscore in range(WORLDMAP_QUEST_SWIPES):
+            if isinstance(swipe, str):
+                DeviceShell(swipe)
+            Press(press_any_key)
+            Sleep(1)
+            if visible():
+                return
+        logger.info(_("世界地图上没找到目标, 顺时针拖动一圈地图寻找."))
+        for underscore in range(WORLDMAP_TOUR_LAPS):
+            for cmd, count in WORLDMAP_TOUR:
+                for underscore2 in range(count):
+                    DeviceShell(cmd)
+                    Sleep(1)
+                    if visible():
+                        return
     def TeleportFromCityToWorldLocation(target, swipe, press_any_key = [550,1]):
         nonlocal runtimeContext
         FindCoordsOrElseExecuteFallbackAndWait(["intoWorldMap","dungFlag","worldmapflag","openworldmap"],["startdownload","closePartyInfo","closePartyInfo_fortress","closePartyInfo_waterway",[1,1]],1)
@@ -1496,6 +1528,7 @@ def Factory():
             Press([250,1500])
             runtimeContext._ZOOMWORLDMAP = True
         Sleep(1)
+        SwipeWorldMapUntilVisible(target, swipe, press_any_key)
         pos = FindCoordsOrElseExecuteFallbackAndWait([target,"openworldmap", "dungflag"],[swipe,press_any_key],1)
 
         if CheckIf(scn:=ScreenShot(), "dungflag"):
