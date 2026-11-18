@@ -120,6 +120,7 @@ class RuntimeContext:
     _IMPORTANTINFO = ""
     _RESUMEAVAILABLE = False
     _LANGUAGE_CHECKS_LEFT = 3 # The game language is checked at most this many times per run (see EnsureGameLanguage).
+    _RESTARTS_WITHOUT_PROGRESS = 0 # Game restarts since the bot last got anywhere (see restartGame).
     _TITLE_TAP_TIME = 0 # When "Tap to Start" was last tapped, 0 while the title page is not showing.
     _TRAVEL = None # Screen position of the altar "Travel" button to press the next time the Harken menu shows up (see the "travel" target).
     _TRAVEL_DONE = False # Set by IdentifyState once the Travel button has been pressed, consumed by StateDungeon.
@@ -1284,6 +1285,7 @@ def Factory():
         Sleep(1)
         restartGame()
         return None
+    MAX_RESTARTS_WITHOUT_PROGRESS = 5 # Restarts in a row, without a state change or a finished target in between, before the bot stops.
     def restartGame(skip_screenshot = False, force_restart_EMU = False):
         nonlocal runtimeContext
         runtimeContext.record_special_event(_("重启游戏"))
@@ -1302,6 +1304,14 @@ def Factory():
             SaveImage(ScreenShot())
 
         package_name = "jp.co.drecom.wizardry.daphne"
+
+        # A restart that does not lead anywhere repeats forever (e.g. a "new version available" dialog whose button
+        # opens the store, so every launch ends the same way). Give up and stop instead of spinning.
+        runtimeContext._RESTARTS_WITHOUT_PROGRESS += 1
+        if runtimeContext._RESTARTS_WITHOUT_PROGRESS > MAX_RESTARTS_WITHOUT_PROGRESS:
+            logger.error(_("连续重启游戏{a}次仍无法恢复, 停止脚本. 请检查游戏状态(例如是否需要更新游戏).".format(a=runtimeContext._RESTARTS_WITHOUT_PROGRESS - 1)), summary=True)
+            GlobalStopEvent.set()
+            raise StopRequested()
 
         runtimeContext._CRASHCOUNTER +=1
         logger.info(_("崩溃计数: {a}\n崩溃计数超过{b}次后会重启模拟器.".format(a=runtimeContext._CRASHCOUNTER, b=setting.MAX_CRASH_LIMIT)))
@@ -2770,6 +2780,7 @@ def Factory():
 
             targetInfoList.pop(0)
             runtimeContext.TASK_STEP_INDEX += 1
+            runtimeContext._RESTARTS_WITHOUT_PROGRESS = 0
 
             if setting.TASK_POINT_STRATEGY.get("overall_strategy", "") == "自定义任务点策略":
                 logger.info(f"由于面板设置, 切换到新任务点对应的策略.")
@@ -3167,6 +3178,7 @@ def Factory():
                         lambda: _identifyState()
                         )
                     logger.info(_("下一状态: {a}".format(a=state)))
+                    runtimeContext._RESTARTS_WITHOUT_PROGRESS = 0
                     if state ==State.Quit:
                         logger.info(_("即将停止脚本..."))
                         break
