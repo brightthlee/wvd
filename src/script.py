@@ -120,6 +120,7 @@ class RuntimeContext:
     _IMPORTANTINFO = ""
     _RESUMEAVAILABLE = False
     _LANGUAGE_CHECKS_LEFT = 3 # The game language is checked at most this many times per run (see EnsureGameLanguage).
+    _TITLE_TAP_TIME = 0 # When "Tap to Start" was last tapped, 0 while the title page is not showing.
     _TRAVEL = None # Screen position of the altar "Travel" button to press the next time the Harken menu shows up (see the "travel" target).
     _TRAVEL_DONE = False # Set by IdentifyState once the Travel button has been pressed, consumed by StateDungeon.
     _RESUMERE_TRY_COUNTER = 0 # 连续点击resume的次数, 多次点击会重启游戏.
@@ -1136,6 +1137,15 @@ def Factory():
     def MinusImage(image,r,g,b):
         scn_b = image - np.array([b, g, r])
         return np.clip(scn_b, 0, 255).astype(np.uint8)
+    TITLE_TAP_WAIT = 45 # Seconds to wait for the login after tapping "Tap to Start" before tapping again.
+    def IsTitleLoading(scn):
+        """True while the title page shows its loading bar ("The Abyss is readying to open... 100.00%") at the bottom.
+        The bar is a thin bright line, so rows around it are compared with the bar rows; the "Tap to Start" page has
+        a dark background there."""
+        gray = cv2.cvtColor(scn, cv2.COLOR_BGR2GRAY).astype(float)
+        bar = gray[1430:1438, 150:740].mean(axis=0)
+        around = (gray[1414:1422, 150:740].mean(axis=0) + gray[1446:1454, 150:740].mean(axis=0)) / 2
+        return ((bar - around) > 60).mean() > 0.1
     def IsDisclaimerPage(scn):
         """True on the disclaimer page that follows a game launch ("Attention - This story is fictional...").
         The page has two long thin horizontal divider lines exactly 372 pixels apart on a dark gradient, in every
@@ -1190,11 +1200,19 @@ def Factory():
         # that appear on no other page. Matching them is much more reliable than matching the "Tap to Start" text,
         # whose background keeps moving: the text template only scored 0.2 to 0.5 against the real title page.
         if CheckIf(scn,"titleIcons",[[0,0,200,400]]):
+            # A loading bar at the bottom means the game is still working (an update download can take very long),
+            # so wait for it without any time limit. After a tap the login takes 25-35 seconds with the title page
+            # still on screen, so tap once and give it TITLE_TAP_WAIT seconds instead of tapping every few seconds.
+            if IsTitleLoading(scn) or time.time() - runtimeContext._TITLE_TAP_TIME < TITLE_TAP_WAIT:
+                Sleep(2)
+                return True
             Press([450,800])
+            runtimeContext._TITLE_TAP_TIME = time.time()
             logger.info(_("发现开场\"Tap to Start\"画面, 点击进入游戏."))
             runtimeContext.record_special_event(_("点击开场画面"))
             Sleep(1)
             return True
+        runtimeContext._TITLE_TAP_TIME = 0 # The title page is gone, so the next one is a new launch.
         return False
     ##################################################################
     def _is_coord(x):
